@@ -1,0 +1,64 @@
+================================================================================
+LOCAL COMMERCE TRAFFIC FLOW ANALYSIS
+Costa Coffee @ Trinity College, Dublin
+================================================================================
+
+Report Generated: 2025-11-15 18:52:09
+
+================================================================================
+EXECUTIVE SUMMARY
+================================================================================
+
+📊 TOP 3 PEAK WALK-BY PERIODS:
+  #1: 13:00-14:00 - Walk-by Score: 11.22
+  #2: 12:00-13:00 - Walk-by Score: 10.95
+  #3: 14:00-15:00 - Walk-by Score: 6.60
+
+⚠️  LOWEST TRAFFIC PERIODS:
+  #1: 03:00-04:00 - Walk-by Score: 0.03
+  #2: 04:00-05:00 - Walk-by Score: 0.04
+  #3: 05:00-06:00 - Walk-by Score: 0.19
+
+================================================================================
+DATA SOURCES
+================================================================================
+
+✓ DLR Footfall Data: 6576 records
+  Date Range: 2025-01-01 00:00:00 to 2025-10-31 23:00:00
+
+✓ SCATS Location Data: 290 monitoring sites
+  Sites within 2km of Costa: 0
+
+✓ SCATS Traffic Volume: 500000 records (sample)
+  Total Vehicle Count: 26,454,009
+
+✓ Manual Sensor Data: 160 samples
+  Collection Sessions: 3
+  Location: Costa Coffee @ Trinity College
+
+================================================================================
+BUSINESS RECOMMENDATIONS
+================================================================================
+
+🎯 MAXIMIZE PEAK OPPORTUNITY (13:00-14:00):
+  • Increase staffing 30 minutes before peak
+  • Deploy outdoor signage at 12:00
+  • Consider outdoor seating/display during this period
+  • Staff greeting at entrance during peak
+
+💡 OPTIMIZE LOW-TRAFFIC PERIODS:
+  • 03:00-04:00: Run targeted promotions
+  • 04:00-05:00: Run targeted promotions
+  • 05:00-06:00: Run targeted promotions
+  • Focus on dwell time and repeat customers
+  • Reduce staffing to minimum during these hours
+
+📈 CONVERSION STRATEGY:
+  • Current peak walk-by score: 11.22
+  • Target: Convert 5-10% of walk-by traffic
+  • Methods: Signage, window display, aroma, visibility
+
+🔄 CONTINUOUS MONITORING:
+  • Track actual conversion rates during peak hours
+  • Compare weekday vs weekend patterns
+  • Monitor impact of external events (transport delays, weather)
