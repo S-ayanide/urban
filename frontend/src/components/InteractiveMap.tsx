@@ -26,9 +26,12 @@ export default function InteractiveMap({
   const map = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const hasInitialized = useRef(false); // Track if map has been initialized
 
-  // Default to Dublin coordinates
-  const dublinCenter: [number, number] = [53.3498, -6.2603];
+  // Default to Dublin coordinates (Mapbox uses [longitude, latitude] format)
+  const dublinCenter: [number, number] = [-6.2603, 53.3498];
+  // Initial render center - specific location (Costa Coffee) - [longitude, latitude]
+  const initialCenter: [number, number] = [-6.256438447082149, 53.344377563958645];
   
   // Calculate center from locations if available, otherwise use Dublin
   const mapCenter = scatsLocations.length > 0
@@ -64,11 +67,11 @@ export default function InteractiveMap({
     // Set the access token
     mapboxgl.accessToken = accessToken;
 
-    // Use Mapbox Streets style - always start with Dublin center
+    // Use Mapbox Streets style - start with specific initial center (only on first render)
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/streets-v12',
-      center: dublinCenter,
+      center: initialCenter, // Use specific location on initial render
       zoom: zoom,
       attributionControl: true,
     });
@@ -76,32 +79,17 @@ export default function InteractiveMap({
     // Add navigation controls
     map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
+    // Ensure map is centered on initial location immediately after creation
+    map.current.setCenter(initialCenter);
+    map.current.setZoom(zoom);
+
     map.current.on('load', () => {
       setMapLoaded(true);
       
-      // After map loads, fit bounds to locations if available and valid
-      if (scatsLocations.length > 0) {
-        const validLocations = scatsLocations.filter(loc => 
-          loc.Lat > 50 && loc.Lat < 55 && loc.Long > -8 && loc.Long < -5
-        );
-        
-        if (validLocations.length > 0) {
-          const bounds = new mapboxgl.LngLatBounds();
-          validLocations.forEach(loc => {
-            bounds.extend([loc.Long, loc.Lat]);
-          });
-          map.current!.fitBounds(bounds, {
-            padding: 50,
-            maxZoom: 12,
-          });
-        } else {
-          // If no valid locations, ensure we're centered on Dublin
-          map.current!.setCenter(dublinCenter);
-        }
-      } else {
-        // No locations, ensure Dublin center
-        map.current!.setCenter(dublinCenter);
-      }
+      // Explicitly ensure we're centered on initial location when map loads (first render only)
+      // This prevents any automatic bounds fitting from moving the map
+      map.current!.setCenter(initialCenter);
+      map.current!.setZoom(zoom);
     });
 
     // Handle map clicks
@@ -123,6 +111,10 @@ export default function InteractiveMap({
   // Update markers when locations change
   useEffect(() => {
     if (!map.current || !mapLoaded) return;
+
+    // Store current center/zoom to prevent map from moving when adding markers
+    const currentCenter = map.current.getCenter();
+    const currentZoom = map.current.getZoom();
 
     // Remove existing markers
     markersRef.current.forEach(marker => marker.remove());
@@ -160,7 +152,10 @@ export default function InteractiveMap({
 
       markersRef.current.push(marker);
     });
-  }, [scatsLocations, mapLoaded, onMarkerClick]);
+
+    // Don't move the map when adding markers - let user control the view after first render
+    // The initial center is only set on first render, not when markers are added
+  }, [scatsLocations, mapLoaded, onMarkerClick, selectedLocation]);
 
   // Update selected location
   useEffect(() => {
@@ -204,35 +199,86 @@ export default function InteractiveMap({
 
     // Add circle around selected location
     const circleId = 'selected-circle';
-    if (map.current.getSource(circleId)) {
-      map.current.removeLayer(circleId);
-      map.current.removeSource(circleId);
+    
+    // Function to add the circle
+    const addCircle = () => {
+      if (!map.current || !selectedLocation) return;
+      
+      try {
+        // Remove existing circle if it exists (layer first, then source)
+        if (map.current.getLayer(circleId)) {
+          map.current.removeLayer(circleId);
+        }
+        if (map.current.getSource(circleId)) {
+          map.current.removeSource(circleId);
+        }
+
+        // Add the circle source and layer
+        map.current.addSource(circleId, {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            geometry: {
+              type: 'Point',
+              coordinates: [selectedLocation.Long, selectedLocation.Lat],
+            },
+          },
+        });
+
+        // Try to add the circle layer before any existing layers to ensure visibility
+        const layers = map.current.getStyle().layers;
+        const firstSymbolLayer = layers.find((layer: any) => layer.type === 'symbol');
+        const beforeId = firstSymbolLayer ? firstSymbolLayer.id : undefined;
+
+        // Calculate approximate pixel radius for 500 meters at different zoom levels
+        // Formula: meters * (256 * 2^zoom) / (40075017 * cos(lat))
+        // For Dublin (lat ~53.35): cos(53.35°) ≈ 0.595
+        const lat = selectedLocation.Lat;
+        const latRad = (lat * Math.PI) / 180;
+        const earthCircumference = 40075017; // meters
+        const meters = 500; // Desired radius in meters
+        
+        const radiusAtZoom10 = (meters * 256 * Math.pow(2, 10)) / (earthCircumference * Math.cos(latRad));
+        const radiusAtZoom15 = (meters * 256 * Math.pow(2, 15)) / (earthCircumference * Math.cos(latRad));
+        const radiusAtZoom20 = (meters * 256 * Math.pow(2, 20)) / (earthCircumference * Math.cos(latRad));
+
+        map.current.addLayer({
+          id: circleId,
+          type: 'circle',
+          source: circleId,
+          beforeId: beforeId, // Add before symbol layers to ensure visibility
+          paint: {
+            // Use zoom-based interpolation to keep radius constant in meters (500m)
+            'circle-radius': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              10, radiusAtZoom10,
+              15, radiusAtZoom15,
+              20, radiusAtZoom20
+            ],
+            'circle-color': '#ef4444',
+            'circle-opacity': 0.15, // Subtle fill opacity
+            'circle-stroke-width': 2, // Thinner stroke for subtlety
+            'circle-stroke-color': '#ef4444',
+            'circle-stroke-opacity': 0.6, // Visible but subtle stroke opacity
+          },
+        });
+        
+        console.log('Circle added at:', selectedLocation.Long, selectedLocation.Lat);
+      } catch (error) {
+        console.error('Error adding circle:', error);
+      }
+    };
+
+    // Add circle first (before zooming)
+    // Ensure map style is loaded before adding layers
+    if (map.current.isStyleLoaded()) {
+      addCircle();
+    } else {
+      // If style not loaded yet, wait for it
+      map.current.once('style.load', addCircle);
     }
-
-    map.current.addSource(circleId, {
-      type: 'geojson',
-      data: {
-        type: 'Feature',
-        geometry: {
-          type: 'Point',
-          coordinates: [selectedLocation.Long, selectedLocation.Lat],
-        },
-      },
-    });
-
-    map.current.addLayer({
-      id: circleId,
-      type: 'circle',
-      source: circleId,
-      paint: {
-        'circle-radius': 300,
-        'circle-color': '#ef4444',
-        'circle-opacity': 0.2,
-        'circle-stroke-width': 3,
-        'circle-stroke-color': '#ef4444',
-        'circle-stroke-opacity': 0.8,
-      },
-    });
 
     // Zoom to selected location
     map.current.flyTo({
@@ -244,10 +290,19 @@ export default function InteractiveMap({
     markersRef.current.push(selectedMarker);
 
     return () => {
+      // Cleanup: remove marker and circle when location changes or component unmounts
       selectedMarker.remove();
-      if (map.current?.getLayer(circleId)) {
-        map.current.removeLayer(circleId);
-        map.current.removeSource(circleId);
+      if (map.current) {
+        try {
+          if (map.current.getLayer(circleId)) {
+            map.current.removeLayer(circleId);
+          }
+          if (map.current.getSource(circleId)) {
+            map.current.removeSource(circleId);
+          }
+        } catch (error) {
+          // Ignore errors during cleanup
+        }
       }
     };
   }, [selectedLocation, mapLoaded]);
