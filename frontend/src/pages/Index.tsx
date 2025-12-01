@@ -4,13 +4,13 @@ import { MapPin, TrendingUp, Users, Activity, Clock, AlertCircle, Loader2, Searc
 import { generateTrafficData, getDataStats, loadBusinessData, type TrafficDataPoint } from "@/lib/dataService";
 import { generateRealTrafficData, type BusinessMetrics } from "@/lib/realDataService";
 import { generateAIRecommendations } from "@/lib/geminiService";
-import { 
-  loadSCATSLocations, 
-  analyzeLocation, 
+import {
+  loadSCATSLocations,
+  analyzeLocation,
   searchLocationsByRoadName,
   findNearestSCATSLocation,
   type SCATSLocation,
-  type LocationAnalysis 
+  type LocationAnalysis
 } from "@/lib/scatsService";
 import InteractiveMap from "@/components/InteractiveMap";
 import { Input } from "@/components/ui/input";
@@ -25,8 +25,8 @@ const Index = () => {
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [loading, setLoading] = useState(true);
   const [businessName, setBusinessName] = useState("Explore Locations on the Map");
-  const [selectedBusiness, setSelectedBusiness] = useState<'costa' | 'tbc' | 'all' | null>(null);
-  
+  const [selectedBusiness, setSelectedBusiness] = useState<'costa' | 'tbc' | null>(null);
+
   // Map and location state
   const [scatsLocations, setScatsLocations] = useState<SCATSLocation[]>([]);
   const [selectedLocation, setSelectedLocation] = useState<SCATSLocation | null>(null);
@@ -35,8 +35,8 @@ const Index = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SCATSLocation[]>([]);
   const [analyzingLocation, setAnalyzingLocation] = useState(false);
-  
-  // Load SCATS locations on mount
+  const [clickedLocation, setClickedLocation] = useState<{ lat: number; lon: number } | null>(null);
+
   useEffect(() => {
     async function loadLocations() {
       const locations = await loadSCATSLocations();
@@ -44,8 +44,7 @@ const Index = () => {
     }
     loadLocations();
   }, []);
-  
-  // Load traffic data when business is selected
+
   useEffect(() => {
     async function loadData() {
       if (selectedBusiness === null) {
@@ -53,15 +52,13 @@ const Index = () => {
         setLoading(false);
         return;
       }
-      
+
       setLoading(true);
       try {
-        // Load real metrics for specific businesses
         if (selectedBusiness === 'costa' || selectedBusiness === 'tbc') {
           const metrics = await generateRealTrafficData(selectedBusiness);
           setRealMetrics(metrics);
-          
-          // Convert to TrafficDataPoint format
+
           const data = metrics.hourlyData.map(hd => ({
             hour: hd.hour,
             score: hd.score,
@@ -70,12 +67,12 @@ const Index = () => {
             activity: hd.activity,
           }));
           setTrafficData(data);
-          
+
           // Update business name and center
           const business = await loadBusinessData(selectedBusiness);
           setBusinessName(business.name);
           setMapCenter([business.lat, business.lon]);
-          
+
           // Analyze SCATS potential around business location
           let locationsToUse = scatsLocations;
           if (locationsToUse.length === 0) {
@@ -84,7 +81,7 @@ const Index = () => {
           }
           const scatsAnalysis = await analyzeLocation(business.lat, business.lon, locationsToUse);
           setLocationAnalysis(scatsAnalysis);
-          
+
           // Generate AI recommendations
           setLoadingRecommendations(true);
           setAiRecommendations([]); // Clear previous
@@ -98,14 +95,6 @@ const Index = () => {
           } finally {
             setLoadingRecommendations(false);
           }
-        } else {
-          // Combined view - use fallback method
-          setRealMetrics(null);
-          setAiRecommendations([]);
-          setLocationAnalysis(null);
-          const data = await generateTrafficData(undefined);
-          setTrafficData(data);
-          setBusinessName("Combined Analysis - All Locations");
         }
       } catch (error) {
         console.error('Error loading data:', error);
@@ -115,17 +104,17 @@ const Index = () => {
         setLoading(false);
       }
     }
-    
+
     loadData();
   }, [selectedBusiness, scatsLocations]);
-  
+
   // Handle search
   const handleSearch = () => {
     if (!searchQuery.trim()) {
       setSearchResults([]);
       return;
     }
-    
+
     // Try to parse as coordinates
     const coordMatch = searchQuery.match(/(-?\d+\.?\d*)[,\s]+(-?\d+\.?\d*)/);
     if (coordMatch) {
@@ -136,11 +125,11 @@ const Index = () => {
         return;
       }
     }
-    
+
     // Search by road name
     const results = searchLocationsByRoadName(searchQuery, scatsLocations);
     setSearchResults(results);
-    
+
     if (results.length === 1) {
       handleLocationClick(results[0]);
     } else if (results.length > 0) {
@@ -148,12 +137,13 @@ const Index = () => {
       handleLocationClick(results[0]);
     }
   };
-  
+
   // Handle location selection from map click
   const handleLocationSelect = async (lat: number, lon: number) => {
     setAnalyzingLocation(true);
     setMapCenter([lat, lon]);
-    
+    setClickedLocation({ lat, lon });
+
     const nearest = findNearestSCATSLocation(lat, lon, scatsLocations);
     if (nearest) {
       setSelectedLocation(nearest);
@@ -163,59 +153,58 @@ const Index = () => {
       setSelectedLocation(null);
       setLocationAnalysis(null);
     }
-    
+
     setAnalyzingLocation(false);
   };
-  
+
   // Handle marker click
   const handleLocationClick = async (location: SCATSLocation) => {
     setAnalyzingLocation(true);
     setSelectedLocation(location);
     setMapCenter([location.Lat, location.Long]);
     setSearchQuery(location.Location);
-    
+    setClickedLocation(null);
+
     const analysis = await analyzeLocation(location.Lat, location.Long, scatsLocations);
     setLocationAnalysis(analysis);
     setAnalyzingLocation(false);
   };
-  
-  const peakData = realMetrics 
-    ? { 
-        hour: realMetrics.peakHour, 
-        score: realMetrics.peakScore, 
-        pedestrians: realMetrics.peakFootfall, 
-        traffic: trafficData.find(d => d.hour === realMetrics.peakHour)?.traffic || 0,
-        activity: trafficData.find(d => d.hour === realMetrics.peakHour)?.activity || -70
-      }
-    : (trafficData.length > 0 
-        ? trafficData.reduce((max, item) => item.score > max.score ? item : max, trafficData[0])
-        : { hour: 0, score: 0, pedestrians: 0, traffic: 0, activity: -70 });
-  
+
+  const peakData = realMetrics
+    ? {
+      hour: realMetrics.peakHour,
+      score: realMetrics.peakScore,
+      pedestrians: realMetrics.peakFootfall,
+      traffic: trafficData.find(d => d.hour === realMetrics.peakHour)?.traffic || 0,
+      activity: trafficData.find(d => d.hour === realMetrics.peakHour)?.activity || -70
+    }
+    : (trafficData.length > 0
+      ? trafficData.reduce((max, item) => item.score > max.score ? item : max, trafficData[0])
+      : { hour: 0, score: 0, pedestrians: 0, traffic: 0, activity: -70 });
+
   const selectedData = trafficData.find(d => d.hour === selectedHour) || peakData;
-  
-  // Get statistics - use real metrics if available
+
   const stats = realMetrics
     ? {
-        peakData,
-        totalPedestrians: realMetrics.peakFootfall,
-        avgActivity: trafficData.reduce((sum, d) => sum + d.activity, 0) / trafficData.length,
-        activityRate: realMetrics.activityRate,
-      }
+      peakData,
+      totalPedestrians: realMetrics.peakFootfall,
+      avgActivity: trafficData.reduce((sum, d) => sum + d.activity, 0) / trafficData.length,
+      activityRate: realMetrics.activityRate,
+    }
     : (trafficData.length > 0 ? getDataStats(trafficData) : {
-        peakData,
-        totalPedestrians: 0,
-        avgActivity: -70,
-        activityRate: 0,
-      });
-  
-  // Format functions
+      peakData,
+      totalPedestrians: 0,
+      avgActivity: -70,
+      activityRate: 0,
+    });
+
   const formatHour = (hour: number) => `${hour.toString().padStart(2, '0')}:00`;
   const formatNumber = (num: number) => num.toLocaleString();
   const displayValue = (value?: number, suffix = '') => {
     if (value === undefined || value === null || value <= 0) return '—';
     return `${formatNumber(Math.round(value))}${suffix}`;
   };
-  
+
   // Format Y-axis tick values to avoid overlapping
   const formatYAxisTick = (value: number) => {
     if (value === 0) return '0';
@@ -265,16 +254,16 @@ const Index = () => {
 
   const parsedRecommendations = useMemo(() => {
     if (!realMetrics) return [];
-    
+
     const source = aiRecommendations.length > 0 ? aiRecommendations : (realMetrics?.recommendations || []);
     const parsed: ParsedRecommendation[] = [];
-    
+
     let currentRec: Partial<ParsedRecommendation> | null = null;
-    
+
     source.forEach(line => {
       const trimmed = line.trim();
       if (!trimmed) return;
-      
+
       // Detect peak opportunity
       if (trimmed.match(/peak.*opportunity|peak.*analysis/i)) {
         if (currentRec) parsed.push(currentRec as ParsedRecommendation);
@@ -337,7 +326,7 @@ const Index = () => {
         const trafficMatch = trimmed.match(/(\d+)\s*(?:traffic|vehicles?|volume)/i);
         const hourMatch = trimmed.match(/(\d+)\s*hours?/i);
         const percentMatch = trimmed.match(/(\d+)%/i);
-        
+
         if (pedMatch) {
           currentRec.metrics.push({ label: 'Pedestrians', value: parseInt(pedMatch[1]), unit: '/hr' });
         }
@@ -356,7 +345,7 @@ const Index = () => {
         if (percentMatch) {
           currentRec.metrics.push({ label: 'Conversion', value: parseInt(percentMatch[1]), unit: '%' });
         }
-        
+
         // Extract actions
         if (trimmed.match(/increase|deploy|maintain|reduce|run|focus|ensure/i) && trimmed.length > 15) {
           currentRec.actions.push(trimmed.replace(/^[•\-\*]\s*/, ''));
@@ -368,10 +357,9 @@ const Index = () => {
         if (reason) currentRec.actions.push(reason);
       }
     });
-    
+
     if (currentRec) parsed.push(currentRec as ParsedRecommendation);
-    
-    // Add fallback recommendations if none parsed
+
     if (parsed.length === 0 && realMetrics) {
       // Peak opportunity
       parsed.push({
@@ -390,18 +378,15 @@ const Index = () => {
         color: 'primary',
         icon: '',
       });
-      
-      // Busy periods - only show if they have real quantifiable data
+
       realMetrics.busyPeriods
         .filter(period => {
-          // Only include periods with actual data (at least 1 hour and meaningful metrics)
           const periodData = realMetrics.hourlyData.filter(d => d.hour >= period.start && d.hour <= period.end);
           if (periodData.length === 0) return false;
-          
+
           const avgPed = periodData.reduce((sum, d) => sum + d.pedestrians, 0) / periodData.length;
           const avgScore = periodData.reduce((sum, d) => sum + d.score, 0) / periodData.length;
-          
-          // Only show if has meaningful pedestrians (> 30) or high score (> 6)
+
           return avgPed > 30 || avgScore > 6;
         })
         .forEach(period => {
@@ -410,7 +395,7 @@ const Index = () => {
           const avgScore = periodData.reduce((sum, d) => sum + d.score, 0) / periodData.length;
           const avgActivity = periodData.reduce((sum, d) => sum + d.activity, 0) / periodData.length;
           const duration = period.end - period.start + 1;
-          
+
           // Only show metrics that have real data (not zeros or missing)
           const metrics: { label: string; value: string | number; unit?: string }[] = [];
           if (avgPed > 0) {
@@ -425,7 +410,7 @@ const Index = () => {
           if (duration > 0) {
             metrics.push({ label: 'Duration', value: duration, unit: ' hrs' });
           }
-          
+
           if (metrics.length > 0) {
             parsed.push({
               type: 'busy',
@@ -442,7 +427,7 @@ const Index = () => {
           }
         });
     }
-    
+
     return parsed;
   }, [aiRecommendations, realMetrics]);
 
@@ -462,18 +447,18 @@ const Index = () => {
     const weighted = scatsSummary.weightedAvg || 0;
     return Math.max(0, Math.round(base * 0.6 + weighted * 40));
   }, [scatsSummary]);
-  
+
   // Generate traffic data from location analysis
   const locationTrafficData = useMemo(() => {
     if (!locationAnalysis || locationAnalysis.hourlyData.length === 0) return [];
-    
+
     return locationAnalysis.hourlyData.map(hd => ({
       hour: hd.hour,
       volume: hd.volume,
       score: hd.volume / 100, // Normalize for display
     }));
   }, [locationAnalysis]);
-  
+
   if (loading && selectedBusiness !== null) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -484,11 +469,11 @@ const Index = () => {
       </div>
     );
   }
-  
+
   return (
     <div className="min-h-screen bg-background p-4 md:p-8">
       <div className="max-w-7xl mx-auto space-y-8">
-        
+
         {/* Header */}
         <div className="bg-card rounded-2xl shadow-2xl p-6 md:p-8 border border-border">
           <div className="flex items-start justify-between">
@@ -502,38 +487,26 @@ const Index = () => {
               <p className="text-muted-foreground">
                 {selectedBusiness ? 'Real-time Walk-by Potential Analysis' : 'Click on map or search to analyze locations'}
               </p>
-              
+
               {/* Business selector */}
               <div className="mt-4 flex gap-2 flex-wrap">
                 <button
                   onClick={() => setSelectedBusiness(selectedBusiness === 'costa' ? null : 'costa')}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    selectedBusiness === 'costa'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                  }`}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${selectedBusiness === 'costa'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                    }`}
                 >
                   Costa Coffee
                 </button>
                 <button
                   onClick={() => setSelectedBusiness(selectedBusiness === 'tbc' ? null : 'tbc')}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    selectedBusiness === 'tbc'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                  }`}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${selectedBusiness === 'tbc'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                    }`}
                 >
                   Two Boys Cafe
-                </button>
-                <button
-                  onClick={() => setSelectedBusiness(selectedBusiness === 'all' ? null : 'all')}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    selectedBusiness === 'all'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                  }`}
-                >
-                  Combined
                 </button>
               </div>
             </div>
@@ -585,7 +558,7 @@ const Index = () => {
                   )}
                 </Button>
               </div>
-              
+
               {/* Search Results Dropdown */}
               {searchResults.length > 1 && (
                 <div className="mt-2 max-h-48 overflow-y-auto border border-border rounded-lg bg-card">
@@ -624,127 +597,128 @@ const Index = () => {
               </div>
               <InteractiveMap
                 center={[53.35, -6.26]}
-            zoom={11}
-            scatsLocations={scatsLocations}
-            selectedLocation={selectedLocation}
-            onMapClick={handleLocationSelect}
-            onMarkerClick={handleLocationClick}
-            height="600px"
-          />
-          
-          {selectedLocation && (
-            <div className="mt-4 p-4 bg-muted rounded-lg">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-bold text-foreground">Selected: {selectedLocation.Location}</h3>
-                  <p className="text-sm text-muted-foreground">Site ID: {selectedLocation.Site_ID}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {selectedLocation.Lat.toFixed(6)}, {selectedLocation.Long.toFixed(6)}
-                  </p>
+                zoom={11}
+                scatsLocations={scatsLocations}
+                selectedLocation={selectedLocation}
+                onMapClick={handleLocationSelect}
+                onMarkerClick={handleLocationClick}
+                height="600px"
+                clickedLocation={clickedLocation}
+              />
+
+              {selectedLocation && (
+                <div className="mt-4 p-4 bg-muted rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-bold text-foreground">Selected: {selectedLocation.Location}</h3>
+                      <p className="text-sm text-muted-foreground">Site ID: {selectedLocation.Site_ID}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {selectedLocation.Lat.toFixed(6)}, {selectedLocation.Long.toFixed(6)}
+                      </p>
+                    </div>
+                    {locationAnalysis && (
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-primary">
+                          {locationAnalysis.avgVolume > 0 ? locationAnalysis.avgVolume.toFixed(0) : 'N/A'}
+                        </div>
+                        <div className="text-sm text-muted-foreground">Avg Volume</div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                {locationAnalysis && (
-                  <div className="text-right">
-                    <div className="text-2xl font-bold text-primary">
+              )}
+            </Card>
+
+            {/* Location Analysis Results */}
+            {locationAnalysis && (
+              <Card className="p-6 border-0 shadow-none">
+                <h2 className="text-2xl font-bold text-foreground mb-4">
+                  Traffic Analysis for {locationAnalysis.location}
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                  <div className="p-4 bg-muted rounded-lg">
+                    <div className="text-sm text-muted-foreground mb-1">Average Volume</div>
+                    <div className="text-2xl font-bold text-foreground">
                       {locationAnalysis.avgVolume > 0 ? locationAnalysis.avgVolume.toFixed(0) : 'N/A'}
                     </div>
-                    <div className="text-sm text-muted-foreground">Avg Volume</div>
+                  </div>
+                  <div className="p-4 bg-muted rounded-lg">
+                    <div className="text-sm text-muted-foreground mb-1">Weighted Average</div>
+                    <div className="text-2xl font-bold text-foreground">
+                      {locationAnalysis.weightedAvg > 0 ? locationAnalysis.weightedAvg.toFixed(2) : 'N/A'}
+                    </div>
+                  </div>
+                  <div className="p-4 bg-muted rounded-lg">
+                    <div className="text-sm text-muted-foreground mb-1">Variance</div>
+                    <div className="text-2xl font-bold text-foreground">
+                      {locationAnalysis.weightedVar > 0 ? locationAnalysis.weightedVar.toFixed(2) : 'N/A'}
+                    </div>
+                  </div>
+                  <div className="p-4 bg-muted rounded-lg">
+                    <div className="text-sm text-muted-foreground mb-1">Total Volume</div>
+                    <div className="text-2xl font-bold text-foreground">
+                      {formatNumber(Math.round(locationAnalysis.totalVolume))}
+                    </div>
+                  </div>
+                </div>
+
+                {locationAnalysis.hourlyData.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-bold text-foreground mb-4">Hourly Traffic Volume</h3>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <AreaChart data={locationAnalysis.hourlyData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--grid-color))" />
+                        <XAxis
+                          dataKey="hour"
+                          tickFormatter={formatHour}
+                          stroke="hsl(var(--muted-foreground))"
+                          tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                          label={{ value: 'Time (24-hour format)', position: 'insideBottom', offset: -5, fill: 'hsl(var(--muted-foreground))', style: { fontSize: '12px' } }}
+                        />
+                        <YAxis
+                          label={{ value: 'Traffic Volume (vehicles)', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', style: { fontSize: '12px' } }}
+                          stroke="hsl(var(--muted-foreground))"
+                          tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                          tickFormatter={formatYAxisTick}
+                        />
+                        <Tooltip
+                          labelFormatter={(label) => `Time: ${formatHour(Number(label))}`}
+                          formatter={(value: number) => [`${formatNumber(value)} vehicles`, 'Traffic Volume']}
+                          contentStyle={{
+                            backgroundColor: 'hsl(var(--card))',
+                            border: '1px solid hsl(var(--border))',
+                            borderRadius: '8px',
+                            color: 'hsl(var(--foreground))'
+                          }}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="volume"
+                          stroke="hsl(var(--primary))"
+                          fill="hsl(var(--primary))"
+                          fillOpacity={0.3}
+                          strokeWidth={2}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
                   </div>
                 )}
-              </div>
-            </div>
-          )}
-        </Card>
 
-          {/* Location Analysis Results */}
-          {locationAnalysis && (
-            <Card className="p-6 border-0 shadow-none">
-            <h2 className="text-2xl font-bold text-foreground mb-4">
-              Traffic Analysis for {locationAnalysis.location}
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-              <div className="p-4 bg-muted rounded-lg">
-                <div className="text-sm text-muted-foreground mb-1">Average Volume</div>
-                <div className="text-2xl font-bold text-foreground">
-                  {locationAnalysis.avgVolume > 0 ? locationAnalysis.avgVolume.toFixed(0) : 'N/A'}
-                </div>
-              </div>
-              <div className="p-4 bg-muted rounded-lg">
-                <div className="text-sm text-muted-foreground mb-1">Weighted Average</div>
-                <div className="text-2xl font-bold text-foreground">
-                  {locationAnalysis.weightedAvg > 0 ? locationAnalysis.weightedAvg.toFixed(2) : 'N/A'}
-                </div>
-              </div>
-              <div className="p-4 bg-muted rounded-lg">
-                <div className="text-sm text-muted-foreground mb-1">Variance</div>
-                <div className="text-2xl font-bold text-foreground">
-                  {locationAnalysis.weightedVar > 0 ? locationAnalysis.weightedVar.toFixed(2) : 'N/A'}
-                </div>
-              </div>
-              <div className="p-4 bg-muted rounded-lg">
-                <div className="text-sm text-muted-foreground mb-1">Total Volume</div>
-                <div className="text-2xl font-bold text-foreground">
-                  {formatNumber(Math.round(locationAnalysis.totalVolume))}
-                </div>
-              </div>
-            </div>
-            
-            {locationAnalysis.hourlyData.length > 0 && (
-              <div>
-                <h3 className="text-lg font-bold text-foreground mb-4">Hourly Traffic Volume</h3>
-                <ResponsiveContainer width="100%" height={300}>
-                  <AreaChart data={locationAnalysis.hourlyData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--grid-color))" />
-                    <XAxis 
-                      dataKey="hour" 
-                      tickFormatter={formatHour}
-                      stroke="hsl(var(--muted-foreground))"
-                      tick={{ fill: 'hsl(var(--muted-foreground))' }}
-                      label={{ value: 'Time (24-hour format)', position: 'insideBottom', offset: -5, fill: 'hsl(var(--muted-foreground))', style: { fontSize: '12px' } }}
-                    />
-                    <YAxis 
-                      label={{ value: 'Traffic Volume (vehicles)', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', style: { fontSize: '12px' } }}
-                      stroke="hsl(var(--muted-foreground))"
-                      tick={{ fill: 'hsl(var(--muted-foreground))' }}
-                      tickFormatter={formatYAxisTick}
-                    />
-                    <Tooltip 
-                      labelFormatter={(label) => `Time: ${formatHour(Number(label))}`}
-                      formatter={(value: number) => [`${formatNumber(value)} vehicles`, 'Traffic Volume']}
-                      contentStyle={{ 
-                        backgroundColor: 'hsl(var(--card))', 
-                        border: '1px solid hsl(var(--border))',
-                        borderRadius: '8px',
-                        color: 'hsl(var(--foreground))'
-                      }}
-                    />
-                    <Area 
-                      type="monotone" 
-                      dataKey="volume" 
-                      stroke="hsl(var(--primary))" 
-                      fill="hsl(var(--primary))"
-                      fillOpacity={0.3}
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-            
-            {locationAnalysis.nearbySites.length > 0 && (
-              <div className="mt-6">
-                <h3 className="text-lg font-bold text-foreground mb-3">Nearby Monitoring Sites (within 2km)</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {locationAnalysis.nearbySites.slice(0, 5).map((site) => (
-                    <div key={site.Site_ID} className="p-3 bg-muted rounded-lg text-sm">
-                      <div className="font-medium text-foreground">{site.Location}</div>
-                      <div className="text-muted-foreground">Site ID: {site.Site_ID}</div>
+                {locationAnalysis.nearbySites.length > 0 && (
+                  <div className="mt-6">
+                    <h3 className="text-lg font-bold text-foreground mb-3">Nearby Monitoring Sites (within 2km)</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {locationAnalysis.nearbySites.slice(0, 5).map((site) => (
+                        <div key={site.Site_ID} className="p-3 bg-muted rounded-lg text-sm">
+                          <div className="font-medium text-foreground">{site.Location}</div>
+                          <div className="text-muted-foreground">Site ID: {site.Site_ID}</div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </div>
+                  </div>
+                )}
+              </Card>
             )}
-            </Card>
-          )}
           </>
         )}
 
@@ -753,41 +727,41 @@ const Index = () => {
           <>
             {/* Key Metrics Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-primary/90 rounded-2xl shadow-lg p-6 text-primary-foreground transform transition-transform hover:scale-[1.02] cursor-pointer border border-primary/50">
-            <Clock className="w-8 h-8 mb-3 opacity-90" />
-            <div className="text-4xl font-bold mb-1">{formatHour(peakData.hour)}</div>
-            <div className="text-sm opacity-90">Peak Hour</div>
-            {realMetrics && (
-              <div className="text-xs opacity-75 mt-1">Based on {realMetrics.hourlyData.reduce((sum, d) => sum + d.sampleCount, 0)} samples</div>
-            )}
-          </div>
-          
-          <div className="bg-primary/80 rounded-2xl shadow-lg p-6 text-primary-foreground transform transition-transform hover:scale-[1.02] cursor-pointer border border-primary/40">
-            <TrendingUp className="w-8 h-8 mb-3 opacity-90" />
-            <div className="text-4xl font-bold mb-1">{peakData.score.toFixed(2)}</div>
-            <div className="text-sm opacity-90">Peak Score</div>
-            {realMetrics && (
-              <div className="text-xs opacity-75 mt-1">Walk-by potential</div>
-            )}
-          </div>
-          
-          <div className="bg-accent/90 rounded-2xl shadow-lg p-6 text-accent-foreground transform transition-transform hover:scale-[1.02] cursor-pointer border border-accent/50">
-            <Users className="w-8 h-8 mb-3 opacity-90" />
-            <div className="text-4xl font-bold mb-1">{formatNumber(peakData.pedestrians)}</div>
-            <div className="text-sm opacity-90">Peak Footfall</div>
-            {realMetrics && (
-              <div className="text-xs opacity-75 mt-1">Pedestrians/hour</div>
-            )}
-          </div>
-          
-          <div className="bg-muted rounded-2xl shadow-lg p-6 text-foreground transform transition-transform hover:scale-[1.02] cursor-pointer border border-border">
-            <Activity className="w-8 h-8 mb-3 opacity-70" />
-            <div className="text-4xl font-bold mb-1">{stats.activityRate.toFixed(1)}%</div>
-            <div className="text-sm opacity-80">Activity Rate</div>
-            {realMetrics && (
-              <div className="text-xs opacity-70 mt-1">Hours with high activity</div>
-            )}
-          </div>
+              <div className="bg-primary/90 rounded-2xl shadow-lg p-6 text-primary-foreground transform transition-transform hover:scale-[1.02] cursor-pointer border border-primary/50">
+                <Clock className="w-8 h-8 mb-3 opacity-90" />
+                <div className="text-4xl font-bold mb-1">{formatHour(peakData.hour)}</div>
+                <div className="text-sm opacity-90">Peak Hour</div>
+                {realMetrics && (
+                  <div className="text-xs opacity-75 mt-1">Based on {realMetrics.hourlyData.reduce((sum, d) => sum + d.sampleCount, 0)} samples</div>
+                )}
+              </div>
+
+              <div className="bg-primary/80 rounded-2xl shadow-lg p-6 text-primary-foreground transform transition-transform hover:scale-[1.02] cursor-pointer border border-primary/40">
+                <TrendingUp className="w-8 h-8 mb-3 opacity-90" />
+                <div className="text-4xl font-bold mb-1">{peakData.score.toFixed(2)}</div>
+                <div className="text-sm opacity-90">Peak Score</div>
+                {realMetrics && (
+                  <div className="text-xs opacity-75 mt-1">Walk-by potential</div>
+                )}
+              </div>
+
+              <div className="bg-accent/90 rounded-2xl shadow-lg p-6 text-accent-foreground transform transition-transform hover:scale-[1.02] cursor-pointer border border-accent/50">
+                <Users className="w-8 h-8 mb-3 opacity-90" />
+                <div className="text-4xl font-bold mb-1">{formatNumber(peakData.pedestrians)}</div>
+                <div className="text-sm opacity-90">Peak Footfall</div>
+                {realMetrics && (
+                  <div className="text-xs opacity-75 mt-1">Pedestrians/hour</div>
+                )}
+              </div>
+
+              <div className="bg-muted rounded-2xl shadow-lg p-6 text-foreground transform transition-transform hover:scale-[1.02] cursor-pointer border border-border">
+                <Activity className="w-8 h-8 mb-3 opacity-70" />
+                <div className="text-4xl font-bold mb-1">{stats.activityRate.toFixed(1)}%</div>
+                <div className="text-sm opacity-80">Activity Rate</div>
+                {realMetrics && (
+                  <div className="text-xs opacity-70 mt-1">Hours with high activity</div>
+                )}
+              </div>
             </div>
 
             {/* Main Chart - NO BOX */}
@@ -803,32 +777,32 @@ const Index = () => {
                     }
                   }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--grid-color))" />
-                    <XAxis 
-                      dataKey="hour" 
+                    <XAxis
+                      dataKey="hour"
                       tickFormatter={formatHour}
                       stroke="hsl(var(--muted-foreground))"
                       tick={{ fill: 'hsl(var(--muted-foreground))' }}
                       label={{ value: 'Time (24-hour format)', position: 'insideBottom', offset: -5, fill: 'hsl(var(--muted-foreground))', style: { fontSize: '12px' } }}
                     />
-                    <YAxis 
+                    <YAxis
                       label={{ value: 'Walk-by Score (0-25 scale)', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', style: { fontSize: '12px' } }}
                       stroke="hsl(var(--muted-foreground))"
                       tick={{ fill: 'hsl(var(--muted-foreground))' }}
                     />
-                    <Tooltip 
+                    <Tooltip
                       formatter={(value: number) => value.toFixed(2)}
                       labelFormatter={formatHour}
-                      contentStyle={{ 
-                        backgroundColor: 'hsl(var(--card))', 
+                      contentStyle={{
+                        backgroundColor: 'hsl(var(--card))',
                         border: '1px solid hsl(var(--border))',
                         borderRadius: '8px',
                         color: 'hsl(var(--foreground))'
                       }}
                       labelStyle={{ color: 'hsl(var(--foreground))' }}
                     />
-                    <Bar 
-                      dataKey="score" 
-                      fill="hsl(var(--primary))" 
+                    <Bar
+                      dataKey="score"
+                      fill="hsl(var(--primary))"
                       radius={[8, 8, 0, 0]}
                       cursor="pointer"
                     />
@@ -848,34 +822,34 @@ const Index = () => {
                     <ResponsiveContainer width="100%" height={280}>
                       <AreaChart data={trafficData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--grid-color))" />
-                        <XAxis 
-                          dataKey="hour" 
-                          tickFormatter={formatHour} 
+                        <XAxis
+                          dataKey="hour"
+                          tickFormatter={formatHour}
                           stroke="hsl(var(--muted-foreground))"
                           tick={{ fill: 'hsl(var(--muted-foreground))' }}
                           label={{ value: 'Time (24-hour format)', position: 'insideBottom', offset: -5, fill: 'hsl(var(--muted-foreground))', style: { fontSize: '12px' } }}
                         />
-                        <YAxis 
+                        <YAxis
                           label={{ value: 'Pedestrians per hour', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', style: { fontSize: '12px' } }}
                           stroke="hsl(var(--muted-foreground))"
                           tick={{ fill: 'hsl(var(--muted-foreground))' }}
                           tickFormatter={formatYAxisTick}
                         />
-                        <Tooltip 
+                        <Tooltip
                           labelFormatter={(label) => `Time: ${formatHour(Number(label))}`}
                           formatter={(value: number) => [`${formatNumber(value)} pedestrians`, 'Pedestrians']}
-                          contentStyle={{ 
-                            backgroundColor: 'hsl(var(--card))', 
+                          contentStyle={{
+                            backgroundColor: 'hsl(var(--card))',
                             border: '1px solid hsl(var(--border))',
                             borderRadius: '8px',
                             color: 'hsl(var(--foreground))'
                           }}
                           labelStyle={{ color: 'hsl(var(--foreground))' }}
                         />
-                        <Area 
-                          type="monotone" 
-                          dataKey="pedestrians" 
-                          stroke="hsl(var(--accent))" 
+                        <Area
+                          type="monotone"
+                          dataKey="pedestrians"
+                          stroke="hsl(var(--accent))"
                           fill="hsl(var(--accent))"
                           fillOpacity={0.3}
                           strokeWidth={2}
@@ -892,34 +866,34 @@ const Index = () => {
                     <ResponsiveContainer width="100%" height={280}>
                       <LineChart data={trafficData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--grid-color))" />
-                        <XAxis 
-                          dataKey="hour" 
-                          tickFormatter={formatHour} 
+                        <XAxis
+                          dataKey="hour"
+                          tickFormatter={formatHour}
                           stroke="hsl(var(--muted-foreground))"
                           tick={{ fill: 'hsl(var(--muted-foreground))' }}
                           label={{ value: 'Time (24-hour format)', position: 'insideBottom', offset: -5, fill: 'hsl(var(--muted-foreground))', style: { fontSize: '12px' } }}
                         />
-                        <YAxis 
+                        <YAxis
                           label={{ value: 'Vehicle Traffic Volume', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', style: { fontSize: '12px' } }}
                           stroke="hsl(var(--muted-foreground))"
                           tick={{ fill: 'hsl(var(--muted-foreground))' }}
                           tickFormatter={formatYAxisTick}
                         />
-                        <Tooltip 
+                        <Tooltip
                           labelFormatter={(label) => `Time: ${formatHour(Number(label))}`}
                           formatter={(value: number) => [`${formatNumber(value)} vehicles`, 'Traffic Volume']}
-                          contentStyle={{ 
-                            backgroundColor: 'hsl(var(--card))', 
+                          contentStyle={{
+                            backgroundColor: 'hsl(var(--card))',
                             border: '1px solid hsl(var(--border))',
                             borderRadius: '8px',
                             color: 'hsl(var(--foreground))'
                           }}
                           labelStyle={{ color: 'hsl(var(--foreground))' }}
                         />
-                        <Line 
-                          type="monotone" 
-                          dataKey="traffic" 
-                          stroke="hsl(var(--primary))" 
+                        <Line
+                          type="monotone"
+                          dataKey="traffic"
+                          stroke="hsl(var(--primary))"
                           strokeWidth={3}
                           dot={{ fill: 'hsl(var(--primary))', r: 4 }}
                         />
@@ -938,23 +912,23 @@ const Index = () => {
                     <ResponsiveContainer width="100%" height={280}>
                       <BarChart data={trafficData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--grid-color))" />
-                        <XAxis 
-                          dataKey="hour" 
-                          tickFormatter={formatHour} 
+                        <XAxis
+                          dataKey="hour"
+                          tickFormatter={formatHour}
                           stroke="hsl(var(--muted-foreground))"
                           tick={{ fill: 'hsl(var(--muted-foreground))' }}
                           label={{ value: 'Time (24-hour format)', position: 'insideBottom', offset: -5, fill: 'hsl(var(--muted-foreground))', style: { fontSize: '12px' } }}
                         />
-                        <YAxis 
+                        <YAxis
                           label={{ value: 'Audio Activity Level (dB)', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', style: { fontSize: '12px' } }}
                           stroke="hsl(var(--muted-foreground))"
                           tick={{ fill: 'hsl(var(--muted-foreground))' }}
                         />
-                        <Tooltip 
+                        <Tooltip
                           labelFormatter={(label) => `Time: ${formatHour(Number(label))}`}
                           formatter={(value: number) => [`${value.toFixed(1)} dB`, 'Activity Level']}
-                          contentStyle={{ 
-                            backgroundColor: 'hsl(var(--card))', 
+                          contentStyle={{
+                            backgroundColor: 'hsl(var(--card))',
                             border: '1px solid hsl(var(--border))',
                             borderRadius: '8px',
                             color: 'hsl(var(--foreground))'
@@ -1023,7 +997,7 @@ const Index = () => {
                       <p className="text-xs text-muted-foreground mb-2">Score {peakWindow.avgScore.toFixed(1)}</p>
                       <ResponsiveContainer width="100%" height={60}>
                         <LineChart data={sparklineData.filter(d => {
-                          const hour = parseInt(d.hourLabel.slice(0,2), 10);
+                          const hour = parseInt(d.hourLabel.slice(0, 2), 10);
                           return hour >= Math.max(0, peakWindow.start - 2) && hour <= Math.min(23, peakWindow.end + 2);
                         })}>
                           <XAxis dataKey="hourLabel" hide />
@@ -1070,23 +1044,23 @@ const Index = () => {
                   <ResponsiveContainer width="100%" height={200}>
                     <AreaChart data={sparklineData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--grid-color))" />
-                      <XAxis 
-                        dataKey="hourLabel" 
-                        stroke="hsl(var(--muted-foreground))" 
+                      <XAxis
+                        dataKey="hourLabel"
+                        stroke="hsl(var(--muted-foreground))"
                         tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
                         label={{ value: 'Time (24h)', position: 'insideBottom', offset: -5, fill: 'hsl(var(--muted-foreground))', style: { fontSize: '10px' } }}
                       />
-                      <YAxis 
+                      <YAxis
                         label={{ value: 'Score', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', style: { fontSize: '10px' } }}
-                        stroke="hsl(var(--muted-foreground))" 
+                        stroke="hsl(var(--muted-foreground))"
                         tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
                         tickFormatter={(value) => value.toFixed(1)}
                       />
-                      <YAxis 
-                        yAxisId="1" 
-                        orientation="right" 
+                      <YAxis
+                        yAxisId="1"
+                        orientation="right"
                         label={{ value: 'Pedestrians', angle: 90, position: 'insideRight', fill: 'hsl(var(--muted-foreground))', style: { fontSize: '10px' } }}
-                        stroke="hsl(var(--muted-foreground))" 
+                        stroke="hsl(var(--muted-foreground))"
                         tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
                         tickFormatter={formatYAxisTick}
                       />
@@ -1124,6 +1098,80 @@ const Index = () => {
                 </div>
               )}
 
+              {/* Advanced Algorithms Results */}
+              {realMetrics && (realMetrics.clusters || realMetrics.nextHourPrediction) && (
+                <div className="mb-6 space-y-4">
+                  <h2 className="text-xl font-bold text-foreground">Advanced Analytics</h2>
+                  
+                  {/* K-Means Clustering Results */}
+                  {realMetrics.clusters && realMetrics.clusters.length > 0 && (
+                    <div className="p-5 rounded-xl border-2 border-accent/30 bg-accent/5 shadow-lg">
+                      <h3 className="font-bold text-foreground text-lg mb-4">Temporal Pattern Clusters</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {realMetrics.clusters.map((cluster) => {
+                          const labelColors: Record<string, { bg: string; border: string; text: string }> = {
+                            'quiet': { bg: 'bg-muted/50', border: 'border-muted', text: 'text-muted-foreground' },
+                            'moderate': { bg: 'bg-accent/10', border: 'border-accent/30', text: 'text-accent' },
+                            'busy': { bg: 'bg-primary/10', border: 'border-primary/30', text: 'text-primary' },
+                          };
+                          const colors = labelColors[cluster.label] || labelColors['moderate'];
+                          
+                          return (
+                            <div
+                              key={cluster.clusterId}
+                              className={`p-4 rounded-lg border-2 ${colors.border} ${colors.bg}`}
+                            >
+                              <div className="flex items-center justify-between mb-2">
+                                <span className={`font-bold ${colors.text} capitalize`}>
+                                  {cluster.label}
+                                </span>
+                                <span className="text-sm text-muted-foreground">
+                                  {cluster.hours.length} hours
+                                </span>
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                Hours: {cluster.hours.map(h => formatHour(h)).join(', ')}
+                              </div>
+                              <div className="mt-2 text-xs text-muted-foreground">
+                                Avg Score: {cluster.centroid[3].toFixed(1)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Kalman Filter Predictions */}
+                  {realMetrics.nextHourPrediction && (
+                    <div className="p-5 rounded-xl border-2 border-primary/30 bg-primary/5 shadow-lg">
+                      <h3 className="font-bold text-foreground text-lg mb-4">Next Hour Prediction</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-background/50 rounded-lg p-4 border border-border">
+                          <p className="text-xs text-muted-foreground mb-1">Predicted Pedestrians</p>
+                          <p className="text-2xl font-bold text-foreground">
+                            {Math.round(realMetrics.nextHourPrediction.pedestrians)}
+                          </p>
+                        </div>
+                        <div className="bg-background/50 rounded-lg p-4 border border-border">
+                          <p className="text-xs text-muted-foreground mb-1">Predicted Score</p>
+                          <p className="text-2xl font-bold text-foreground">
+                            {realMetrics.nextHourPrediction.score.toFixed(1)}
+                          </p>
+                        </div>
+                      </div>
+                      {realMetrics.nextHourPrediction.score > 8 && (
+                        <div className="mt-4 p-3 bg-primary/20 rounded-lg border border-primary/30">
+                          <p className="text-sm text-primary font-medium">
+                            High activity predicted - Consider deploying additional staff
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Parsed Recommendations - Visual Boxes */}
               {parsedRecommendations.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1137,7 +1185,7 @@ const Index = () => {
                         'chart-purple': 'primary',
                       };
                       const mappedColor = colorMap[color] || color;
-                      
+
                       const colors: Record<string, { bg: string; border: string; text: string }> = {
                         'primary': { bg: 'bg-primary/10', border: 'border-primary/30', text: 'text-primary' },
                         'accent': { bg: 'bg-accent/10', border: 'border-accent/30', text: 'text-accent' },
@@ -1148,39 +1196,39 @@ const Index = () => {
                       };
                       return colors[mappedColor] || colors['primary'];
                     };
-                    
+
                     const colorClasses = getColorClasses(rec.color);
-                    
+
                     return (
                       <div
                         key={idx}
-                        className={`p-5 rounded-xl border-2 ${colorClasses.border} ${colorClasses.bg} shadow-lg`}
+                        className={`p-3 rounded-md border ${colorClasses.border} ${colorClasses.bg} shadow-sm`}
                       >
                         {/* Header */}
-                        <div className="flex items-center gap-2 mb-4">
+                        <div className="flex items-center gap-2 mb-2">
                           <div className="flex-1">
-                            <h3 className="font-bold text-foreground text-lg">{rec.title}</h3>
+                            <h3 className="font-bold text-foreground text-base">{rec.title}</h3>
                             {rec.period && (
-                              <p className="text-sm text-muted-foreground">{rec.period}</p>
+                              <p className="text-xs text-muted-foreground">{rec.period}</p>
                             )}
                           </div>
                         </div>
 
                         {/* Metrics Grid */}
                         {rec.metrics.length > 0 && (
-                          <div className="grid grid-cols-2 gap-3 mb-4">
+                          <div className="grid grid-cols-2 gap-2 mb-2">
                             {rec.metrics.map((metric, mIdx) => {
                               const displayVal = typeof metric.value === 'number' && metric.value <= 0
                                 ? '—'
                                 : `${typeof metric.value === 'number' ? formatNumber(metric.value) : metric.value}${metric.unit || ''}`;
-                              
+
                               return (
                                 <div
                                   key={mIdx}
-                                  className="bg-background/50 rounded-lg p-3 border border-border"
+                                  className="bg-background/50 rounded p-2 border border-border"
                                 >
-                                  <p className="text-xs text-muted-foreground mb-1">{metric.label}</p>
-                                  <p className="text-lg font-bold text-foreground">{displayVal}</p>
+                                  <p className="text-xs text-muted-foreground mb-0.5">{metric.label}</p>
+                                  <p className="text-base font-bold text-foreground">{displayVal}</p>
                                 </div>
                               );
                             })}
@@ -1189,11 +1237,11 @@ const Index = () => {
 
                         {/* Actions */}
                         {rec.actions.length > 0 && (
-                          <div className="space-y-2">
+                          <div className="space-y-1">
                             {rec.actions.slice(0, 3).map((action, aIdx) => (
                               <div
                                 key={aIdx}
-                                className="bg-background/30 rounded-lg p-2.5 text-sm text-foreground"
+                                className="bg-background/30 rounded p-1.5 text-xs text-foreground"
                               >
                                 {action}
                               </div>
@@ -1205,30 +1253,30 @@ const Index = () => {
                   })}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {/* Peak Opportunity Box */}
-                  <div className="p-5 rounded-xl border-2 border-primary/30 bg-primary/5 shadow-lg">
-                    <div className="flex items-center gap-2 mb-4">
+                  <div className="p-3 rounded-md border border-primary/30 bg-primary/5 shadow-sm">
+                    <div className="flex items-center gap-2 mb-2">
                       <div>
-                        <h3 className="font-bold text-foreground text-lg">Peak Opportunity</h3>
-                        <p className="text-sm text-muted-foreground">{formatHour(peakData.hour)}-{formatHour(peakData.hour + 1)}</p>
+                        <h3 className="font-bold text-foreground text-base">Peak Opportunity</h3>
+                        <p className="text-xs text-muted-foreground">{formatHour(peakData.hour)}-{formatHour(peakData.hour + 1)}</p>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3 mb-4">
-                      <div className="bg-background/50 rounded-lg p-3 border border-border">
-                        <p className="text-xs text-muted-foreground mb-1">Score</p>
-                        <p className="text-lg font-bold text-foreground">{peakData.score.toFixed(1)}</p>
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <div className="bg-background/50 rounded p-2 border border-border">
+                        <p className="text-xs text-muted-foreground mb-0.5">Score</p>
+                        <p className="text-base font-bold text-foreground">{peakData.score.toFixed(1)}</p>
                       </div>
-                      <div className="bg-background/50 rounded-lg p-3 border border-border">
-                        <p className="text-xs text-muted-foreground mb-1">Pedestrians</p>
-                        <p className="text-lg font-bold text-foreground">{displayValue(peakData.pedestrians)}/hr</p>
+                      <div className="bg-background/50 rounded p-2 border border-border">
+                        <p className="text-xs text-muted-foreground mb-0.5">Pedestrians</p>
+                        <p className="text-base font-bold text-foreground">{displayValue(peakData.pedestrians)}/hr</p>
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <div className="bg-background/30 rounded-lg p-2.5 text-sm text-foreground">
+                    <div className="space-y-1">
+                      <div className="bg-background/30 rounded p-1.5 text-xs text-foreground">
                         Increase staffing 30 min before peak
                       </div>
-                      <div className="bg-background/30 rounded-lg p-2.5 text-sm text-foreground">
+                      <div className="bg-background/30 rounded p-1.5 text-xs text-foreground">
                         Deploy outdoor signage at {formatHour(Math.max(0, peakData.hour - 1))}:00
                       </div>
                     </div>
@@ -1236,28 +1284,28 @@ const Index = () => {
 
                   {/* Low Traffic Box */}
                   {lowWindow && (
-                    <div className="p-5 rounded-xl border-2 border-muted bg-muted/50 shadow-lg">
-                      <div className="flex items-center gap-2 mb-4">
+                    <div className="p-3 rounded-md border border-muted bg-muted/50 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
                         <div>
-                          <h3 className="font-bold text-foreground text-lg">Low Activity</h3>
-                          <p className="text-sm text-muted-foreground">{formatHour(lowWindow.start)}-{formatHour(lowWindow.end)}</p>
+                          <h3 className="font-bold text-foreground text-base">Low Activity</h3>
+                          <p className="text-xs text-muted-foreground">{formatHour(lowWindow.start)}-{formatHour(lowWindow.end)}</p>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-3 mb-4">
-                        <div className="bg-background/50 rounded-lg p-3 border border-border">
-                          <p className="text-xs text-muted-foreground mb-1">Pedestrians</p>
-                          <p className="text-lg font-bold text-foreground">{displayValue(lowWindow.avgPed)}/hr</p>
+                      <div className="grid grid-cols-2 gap-2 mb-2">
+                        <div className="bg-background/50 rounded p-2 border border-border">
+                          <p className="text-xs text-muted-foreground mb-0.5">Pedestrians</p>
+                          <p className="text-base font-bold text-foreground">{displayValue(lowWindow.avgPed)}/hr</p>
                         </div>
-                        <div className="bg-background/50 rounded-lg p-3 border border-border">
-                          <p className="text-xs text-muted-foreground mb-1">Duration</p>
-                          <p className="text-lg font-bold text-foreground">{lowWindow.end - lowWindow.start + 1} hrs</p>
+                        <div className="bg-background/50 rounded p-2 border border-border">
+                          <p className="text-xs text-muted-foreground mb-0.5">Duration</p>
+                          <p className="text-base font-bold text-foreground">{lowWindow.end - lowWindow.start + 1} hrs</p>
                         </div>
                       </div>
-                      <div className="space-y-2">
-                        <div className="bg-background/30 rounded-lg p-2.5 text-sm text-foreground">
+                      <div className="space-y-1">
+                        <div className="bg-background/30 rounded p-1.5 text-xs text-foreground">
                           Reduce to skeleton staff
                         </div>
-                        <div className="bg-background/30 rounded-lg p-2.5 text-sm text-foreground">
+                        <div className="bg-background/30 rounded p-1.5 text-xs text-foreground">
                           Run promotions & prep work
                         </div>
                       </div>
@@ -1265,51 +1313,51 @@ const Index = () => {
                   )}
 
                   {/* Conversion Strategy Box */}
-                  <div className="p-5 rounded-xl border-2 border-primary bg-primary/10 shadow-lg">
-                    <div className="flex items-center gap-2 mb-4">
-                      <h3 className="font-bold text-foreground text-lg">Conversion Strategy</h3>
+                  <div className="p-3 rounded-md border border-primary bg-primary/10 shadow-sm">
+                    <div className="flex items-center gap-2 mb-2">
+                      <h3 className="font-bold text-foreground text-base">Conversion Strategy</h3>
                     </div>
-                    <div className="grid grid-cols-2 gap-3 mb-4">
-                      <div className="bg-background/50 rounded-lg p-3 border border-border">
-                        <p className="text-xs text-muted-foreground mb-1">Target</p>
-                        <p className="text-lg font-bold text-foreground">5-10%</p>
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <div className="bg-background/50 rounded p-2 border border-border">
+                        <p className="text-xs text-muted-foreground mb-0.5">Target</p>
+                        <p className="text-base font-bold text-foreground">5-10%</p>
                       </div>
-                      <div className="bg-background/50 rounded-lg p-3 border border-border">
-                        <p className="text-xs text-muted-foreground mb-1">Focus</p>
-                        <p className="text-lg font-bold text-foreground">Peak hrs</p>
+                      <div className="bg-background/50 rounded p-2 border border-border">
+                        <p className="text-xs text-muted-foreground mb-0.5">Focus</p>
+                        <p className="text-base font-bold text-foreground">Peak hrs</p>
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <div className="bg-background/30 rounded-lg p-2.5 text-sm text-foreground">
+                    <div className="space-y-1">
+                      <div className="bg-background/30 rounded p-1.5 text-xs text-foreground">
                         Eye-catching signage & displays
                       </div>
-                      <div className="bg-background/30 rounded-lg p-2.5 text-sm text-foreground">
+                      <div className="bg-background/30 rounded p-1.5 text-xs text-foreground">
                         Staff visibility during peaks
                       </div>
                     </div>
                   </div>
 
                   {/* Monitoring Box */}
-                  <div className="p-5 rounded-xl border-2 border-accent/30 bg-accent/5 shadow-lg">
-                    <div className="flex items-center gap-2 mb-4">
-                      <span className="text-2xl">🔄</span>
-                      <h3 className="font-bold text-foreground text-lg">Monitoring</h3>
+                  <div className="p-3 rounded-md border border-accent/30 bg-accent/5 shadow-sm">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xl">🔄</span>
+                      <h3 className="font-bold text-foreground text-base">Monitoring</h3>
                     </div>
-                    <div className="grid grid-cols-2 gap-3 mb-4">
-                      <div className="bg-background/50 rounded-lg p-3 border border-border">
-                        <p className="text-xs text-muted-foreground mb-1">Track</p>
-                        <p className="text-lg font-bold text-foreground">Daily</p>
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <div className="bg-background/50 rounded p-2 border border-border">
+                        <p className="text-xs text-muted-foreground mb-0.5">Track</p>
+                        <p className="text-base font-bold text-foreground">Daily</p>
                       </div>
-                      <div className="bg-background/50 rounded-lg p-3 border border-border">
-                        <p className="text-xs text-muted-foreground mb-1">Compare</p>
-                        <p className="text-lg font-bold text-foreground">Weekdays</p>
+                      <div className="bg-background/50 rounded p-2 border border-border">
+                        <p className="text-xs text-muted-foreground mb-0.5">Compare</p>
+                        <p className="text-base font-bold text-foreground">Weekdays</p>
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <div className="bg-background/30 rounded-lg p-2.5 text-sm text-foreground">
+                    <div className="space-y-1">
+                      <div className="bg-background/30 rounded p-1.5 text-xs text-foreground">
                         Track conversion rates
                       </div>
-                      <div className="bg-background/30 rounded-lg p-2.5 text-sm text-foreground">
+                      <div className="bg-background/30 rounded p-1.5 text-xs text-foreground">
                         Correlate with sales data
                       </div>
                     </div>
