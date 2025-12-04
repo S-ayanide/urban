@@ -588,7 +588,7 @@ const Index = () => {
                 Local Commerce Traffic Flow
               </h1>
               <p className="text-xl text-primary font-semibold mb-1">
-                {locationAnalysis ? locationAnalysis.location : businessName}
+                {selectedBusiness ? businessName : (locationAnalysis ? locationAnalysis.location : businessName)}
               </p>
               <p className="text-muted-foreground">
                 {selectedBusiness ? 'Real-time Walk-by Potential Analysis' : 'Click on map or search to analyze locations'}
