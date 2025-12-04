@@ -309,9 +309,11 @@ const Index = () => {
       // Detect activity periods
       else if (trimmed.match(/activity.*period|high.*activity/i)) {
         if (currentRec) parsed.push(currentRec as ParsedRecommendation);
+        const periodMatch = trimmed.match(/(\d{2}:\d{2})-(\d{2}:\d{2})/);
         currentRec = {
           type: 'activity',
           title: 'High Activity Periods',
+          period: periodMatch ? `${periodMatch[1]}-${periodMatch[2]}` : undefined,
           metrics: [],
           actions: [],
           color: 'accent',
@@ -327,23 +329,32 @@ const Index = () => {
         const hourMatch = trimmed.match(/(\d+)\s*hours?/i);
         const percentMatch = trimmed.match(/(\d+)%/i);
 
+        // Helper to add metric only if label doesn't exist
+        const addMetricIfNotExists = (label: string, value: number | string, unit?: string) => {
+          const exists = currentRec?.metrics?.some(m => m.label === label);
+          if (!exists && currentRec) {
+            if (!currentRec.metrics) currentRec.metrics = [];
+            currentRec.metrics.push({ label, value, unit });
+          }
+        };
+
         if (pedMatch) {
-          currentRec.metrics.push({ label: 'Pedestrians', value: parseInt(pedMatch[1]), unit: '/hr' });
+          addMetricIfNotExists('Pedestrians', parseInt(pedMatch[1]), '/hr');
         }
         if (scoreMatch) {
-          currentRec.metrics.push({ label: 'Score', value: parseFloat(scoreMatch[1]) });
+          addMetricIfNotExists('Score', parseFloat(scoreMatch[1]));
         }
         if (activityMatch) {
-          currentRec.metrics.push({ label: 'Activity', value: parseFloat(activityMatch[1]), unit: ' dB' });
+          addMetricIfNotExists('Activity', parseFloat(activityMatch[1]), ' dB');
         }
         if (trafficMatch) {
-          currentRec.metrics.push({ label: 'Traffic', value: parseInt(trafficMatch[1]) });
+          addMetricIfNotExists('Traffic', parseInt(trafficMatch[1]));
         }
         if (hourMatch && !currentRec.period) {
-          currentRec.metrics.push({ label: 'Duration', value: parseInt(hourMatch[1]), unit: ' hrs' });
+          addMetricIfNotExists('Duration', parseInt(hourMatch[1]), ' hrs');
         }
         if (percentMatch) {
-          currentRec.metrics.push({ label: 'Conversion', value: parseInt(percentMatch[1]), unit: '%' });
+          addMetricIfNotExists('Conversion', parseInt(percentMatch[1]), '%');
         }
 
         // Extract actions
@@ -360,9 +371,43 @@ const Index = () => {
 
     if (currentRec) parsed.push(currentRec as ParsedRecommendation);
 
-    if (parsed.length === 0 && realMetrics) {
+    // Deduplicate recommendations by period and title
+    const seen = new Set<string>();
+    const deduplicated: ParsedRecommendation[] = [];
+    let peakOpportunityPeriod: string | undefined = undefined;
+
+    // First pass: collect Peak Opportunity period
+    parsed.forEach(rec => {
+      if (rec.title === 'Peak Opportunity') {
+        peakOpportunityPeriod = rec.period;
+      }
+    });
+
+    parsed.forEach(rec => {
+      const key = `${rec.title}-${rec.period || ''}`;
+      if (!seen.has(key)) {
+        // Skip Busy Period if it has the same period as Peak Opportunity
+        if (rec.title === 'Busy Period' && rec.period && rec.period === peakOpportunityPeriod) {
+          return;
+        }
+
+        seen.add(key);
+        // Also deduplicate metrics within each recommendation
+        const uniqueMetrics: typeof rec.metrics = [];
+        const metricLabels = new Set<string>();
+        rec.metrics.forEach(metric => {
+          if (!metricLabels.has(metric.label)) {
+            metricLabels.add(metric.label);
+            uniqueMetrics.push(metric);
+          }
+        });
+        deduplicated.push({ ...rec, metrics: uniqueMetrics });
+      }
+    });
+
+    if (deduplicated.length === 0 && realMetrics) {
       // Peak opportunity
-      parsed.push({
+      deduplicated.push({
         type: 'peak',
         title: 'Peak Opportunity',
         period: `${formatHour(realMetrics.peakHour)}-${formatHour(realMetrics.peakHour + 1)}`,
@@ -379,10 +424,19 @@ const Index = () => {
         icon: '',
       });
 
+      const peakPeriodStart = realMetrics.peakHour;
+      const peakPeriodEnd = realMetrics.peakHour + 1;
+
       realMetrics.busyPeriods
         .filter(period => {
           const periodData = realMetrics.hourlyData.filter(d => d.hour >= period.start && d.hour <= period.end);
           if (periodData.length === 0) return false;
+
+          // Skip busy periods that overlap with Peak Opportunity period
+          const overlapsPeak = (period.start <= peakPeriodStart && period.end >= peakPeriodStart) ||
+            (period.start <= peakPeriodEnd && period.end >= peakPeriodEnd) ||
+            (period.start >= peakPeriodStart && period.end <= peakPeriodEnd);
+          if (overlapsPeak) return false;
 
           const avgPed = periodData.reduce((sum, d) => sum + d.pedestrians, 0) / periodData.length;
           const avgScore = periodData.reduce((sum, d) => sum + d.score, 0) / periodData.length;
@@ -412,7 +466,7 @@ const Index = () => {
           }
 
           if (metrics.length > 0) {
-            parsed.push({
+            deduplicated.push({
               type: 'busy',
               title: 'Busy Period',
               period: `${formatHour(period.start)}-${formatHour(period.end)}`,
@@ -426,9 +480,61 @@ const Index = () => {
             });
           }
         });
+
+      // Add High Activity Periods based on periods with high audio activity
+      // Only add if not already present from AI recommendations
+      const hasHighActivityPeriod = deduplicated.some(rec => rec.title === 'High Activity Periods');
+
+      if (!hasHighActivityPeriod) {
+        const highActivityPeriods = realMetrics.busyPeriods
+          .filter(period => {
+            const periodData = realMetrics.hourlyData.filter(d => d.hour >= period.start && d.hour <= period.end);
+            if (periodData.length === 0) return false;
+
+            // Skip if already shown as Peak Opportunity or Busy Period
+            const overlapsPeak = (period.start <= peakPeriodStart && period.end >= peakPeriodStart) ||
+              (period.start <= peakPeriodEnd && period.end >= peakPeriodEnd) ||
+              (period.start >= peakPeriodStart && period.end <= peakPeriodEnd);
+            if (overlapsPeak) return false;
+
+            const avgActivity = periodData.reduce((sum, d) => sum + d.activity, 0) / periodData.length;
+            // High activity: audio levels above -50 dB
+            return avgActivity > -50;
+          });
+
+        if (highActivityPeriods.length > 0) {
+          highActivityPeriods.forEach(period => {
+            const periodData = realMetrics.hourlyData.filter(d => d.hour >= period.start && d.hour <= period.end);
+            const avgActivity = periodData.reduce((sum, d) => sum + d.activity, 0) / periodData.length;
+            const duration = period.end - period.start + 1;
+
+            const metrics: { label: string; value: string | number; unit?: string }[] = [];
+            if (avgActivity > -70) {
+              metrics.push({ label: 'Activity', value: parseFloat(avgActivity.toFixed(1)), unit: ' dB' });
+            }
+            if (duration > 0) {
+              metrics.push({ label: 'Duration', value: duration, unit: ' hrs' });
+            }
+
+            if (metrics.length > 0) {
+              deduplicated.push({
+                type: 'activity',
+                title: 'High Activity Periods',
+                period: `${formatHour(period.start)}-${formatHour(period.end)}`,
+                metrics: metrics,
+                actions: [
+                  `Audio levels indicate busy environment - ensure ${duration} hour${duration > 1 ? 's' : ''} of peak service`,
+                ],
+                color: 'accent',
+                icon: '',
+              });
+            }
+          });
+        }
+      }
     }
 
-    return parsed;
+    return deduplicated;
   }, [aiRecommendations, realMetrics]);
 
   const scatsSummary = useMemo(() => {
@@ -1102,7 +1208,7 @@ const Index = () => {
               {realMetrics && (realMetrics.clusters || realMetrics.nextHourPrediction) && (
                 <div className="mb-6 space-y-4">
                   <h2 className="text-xl font-bold text-foreground">Advanced Analytics</h2>
-                  
+
                   {/* K-Means Clustering Results */}
                   {realMetrics.clusters && realMetrics.clusters.length > 0 && (
                     <div className="p-5 rounded-xl border-2 border-accent/30 bg-accent/5 shadow-lg">
@@ -1115,7 +1221,7 @@ const Index = () => {
                             'busy': { bg: 'bg-primary/10', border: 'border-primary/30', text: 'text-primary' },
                           };
                           const colors = labelColors[cluster.label] || labelColors['moderate'];
-                          
+
                           return (
                             <div
                               key={cluster.clusterId}
@@ -1141,7 +1247,7 @@ const Index = () => {
                       </div>
                     </div>
                   )}
-                  
+
                   {/* Kalman Filter Predictions */}
                   {realMetrics.nextHourPrediction && (
                     <div className="p-5 rounded-xl border-2 border-primary/30 bg-primary/5 shadow-lg">
